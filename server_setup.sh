@@ -1,53 +1,188 @@
 #!/bin/bash
 
 # =============================================================================
-# СКРИПТ 1: АВТОМАТИЧЕСКАЯ НАСТРОЙКА СЕРВЕРА REALITY
-# Сохраните как: server_setup.sh
-# Запуск: bash server_setup.sh
+# СКРИПТ 1: НАСТРОЙКА REALITY СЕРВЕРА
+# Сохраните как: reality_server_setup.sh
+# Запуск: sudo bash reality_server_setup.sh
 # =============================================================================
 
-echo "🚀 Автоматическая настройка REALITY сервера"
-echo "============================================="
+echo "🚀 НАСТРОЙКА REALITY СЕРВЕРА"
+echo "============================"
 
 # Проверка прав root
 if [[ $EUID -ne 0 ]]; then
-   echo "❌ Запустите скрипт с правами root: sudo bash server_setup.sh"
+   echo "❌ Запустите скрипт с правами root: sudo bash reality_server_setup.sh"
    exit 1
 fi
+
+echo "🔍 Проверка существующих установок..."
+
+# =============================================================================
+# ЭТАП 1: ПОЛНАЯ ОЧИСТКА СИСТЕМЫ
+# =============================================================================
+
+echo "🛑 Остановка всех связанных сервисов..."
+
+# Остановка и отключение всех возможных сервисов
+systemctl stop xray 2>/dev/null || true
+systemctl stop xray.service 2>/dev/null || true
+systemctl stop v2ray 2>/dev/null || true
+systemctl stop v2ray.service 2>/dev/null || true
+systemctl stop v2ray-client 2>/dev/null || true
+systemctl stop v2ray-client.service 2>/dev/null || true
+
+systemctl disable xray 2>/dev/null || true
+systemctl disable xray.service 2>/dev/null || true
+systemctl disable v2ray 2>/dev/null || true
+systemctl disable v2ray.service 2>/dev/null || true
+systemctl disable v2ray-client 2>/dev/null || true
+systemctl disable v2ray-client.service 2>/dev/null || true
+
+echo "🗑️ Удаление файлов сервисов..."
+
+# Удаление systemd сервисов
+rm -f /etc/systemd/system/xray.service
+rm -f /etc/systemd/system/v2ray.service
+rm -f /etc/systemd/system/v2ray-client.service
+rm -f /lib/systemd/system/xray.service
+rm -f /lib/systemd/system/v2ray.service
+rm -f /lib/systemd/system/v2ray-client.service
+
+# Перезагрузка systemd
+systemctl daemon-reload
+systemctl reset-failed
+
+echo "🗂️ Удаление исполняемых файлов..."
+
+# Удаление исполняемых файлов
+rm -f /usr/local/bin/xray
+rm -f /usr/local/bin/v2ray
+rm -f /usr/bin/xray
+rm -f /usr/bin/v2ray
+rm -f /opt/xray
+rm -f /opt/v2ray
+
+echo "📁 Удаление конфигурационных директорий..."
+
+# Удаление конфигурационных директорий
+rm -rf /etc/xray/
+rm -rf /etc/v2ray/
+rm -rf /usr/local/etc/xray/
+rm -rf /usr/local/etc/v2ray/
+rm -rf /var/log/xray/
+rm -rf /var/log/v2ray/
+
+echo "🧽 Удаление временных файлов..."
+
+# Удаление временных и рабочих файлов
+rm -rf /tmp/xray*
+rm -rf /tmp/v2ray*
+rm -rf /tmp/Xray*
+rm -rf /tmp/V2ray*
+rm -f /tmp/reality_keys.txt
+rm -f /root/reality_config.txt
+rm -f /root/reality_check.sh
+
+echo "🔄 Очистка процессов..."
+
+# Убиваем все возможные процессы
+pkill -f xray 2>/dev/null || true
+pkill -f v2ray 2>/dev/null || true
+pkill -f reality 2>/dev/null || true
+
+# Ждем завершения процессов
+sleep 2
+
+echo "✅ Система полностью очищена от предыдущих установок"
+
+# =============================================================================
+# ЭТАП 2: СВЕЖАЯ УСТАНОВКА СЕРВЕРА
+# =============================================================================
+
+echo ""
+echo "🚀 НАЧИНАЕМ СВЕЖУЮ УСТАНОВКУ REALITY СЕРВЕРА"
+echo "==========================================="
 
 # Обновление системы
 echo "📦 Обновление системы..."
 apt update && apt upgrade -y
-apt install wget unzip curl qrencode -y
+apt install wget unzip curl net-tools -y
 
 # Настройка времени
 echo "⏰ Настройка времени..."
 timedatectl set-timezone UTC
 
 # Получение внешнего IP
-SERVER_IP=$(curl -s ifconfig.me)
+SERVER_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || curl -s icanhazip.com)
 echo "🌐 Внешний IP сервера: $SERVER_IP"
 
+if [ -z "$SERVER_IP" ]; then
+    echo "❌ Не удалось определить внешний IP сервера!"
+    echo "Введите IP сервера вручную:"
+    read -p "IP сервера: " SERVER_IP
+fi
+
+# Создание рабочих директорий
+echo "📁 Создание директорий..."
+mkdir -p /etc/xray
+mkdir -p /var/log/xray
+
 # Установка Xray
-echo "⬬ Установка Xray..."
+echo "⬇️ Скачивание и установка Xray..."
 cd /tmp
-wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+rm -f Xray-linux-64.zip* xray*
+
+# Попытка скачать с основного источника
+if ! wget -q https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip; then
+    echo "⚠️ Основной источник недоступен, пробуем альтернативный..."
+    wget -q https://github.com/XTLS/Xray-core/releases/download/v1.8.23/Xray-linux-64.zip
+fi
+
+if [ ! -f "Xray-linux-64.zip" ]; then
+    echo "❌ Не удалось скачать Xray!"
+    exit 1
+fi
+
 unzip -q Xray-linux-64.zip
 chmod +x xray
+
+# Проверка архитектуры
+if ! ./xray version; then
+    echo "❌ Неподходящая архитектура или поврежденный файл!"
+    exit 1
+fi
+
 mv xray /usr/local/bin/
-mkdir -p /etc/xray
-rm -f Xray-linux-64.zip
+rm -f Xray-linux-64.zip LICENSE README.md
+
+echo "✅ Xray установлен: $(/usr/local/bin/xray version | head -1)"
 
 # Генерация ключей
-echo "🔑 Генерация ключей..."
-UUID=$(xray uuid)
-KEYS=$(xray x25519)
+echo "🔑 Генерация новых ключей..."
+UUID=$(/usr/local/bin/xray uuid)
+KEYS=$(/usr/local/bin/xray x25519)
 PRIVATE_KEY=$(echo "$KEYS" | grep "Private key:" | awk '{print $3}')
 PUBLIC_KEY=$(echo "$KEYS" | grep "Public key:" | awk '{print $3}')
 SHORT_ID=$(openssl rand -hex 4)
 
+# Проверка генерации ключей
+if [ -z "$UUID" ] || [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ] || [ -z "$SHORT_ID" ]; then
+    echo "❌ Ошибка генерации ключей!"
+    exit 1
+fi
+
+echo "✅ Ключи сгенерированы успешно"
+
 # Сохранение ключей
 cat > /root/reality_config.txt << EOF
+SERVER_IP=$SERVER_IP
+UUID=$UUID
+PRIVATE_KEY=$PRIVATE_KEY
+PUBLIC_KEY=$PUBLIC_KEY
+SHORT_ID=$SHORT_ID
+EOF
+
+cat > /root/reality_info.txt << EOF
 === КОНФИГУРАЦИЯ REALITY СЕРВЕРА ===
 Дата создания: $(date)
 Внешний IP: $SERVER_IP
@@ -63,16 +198,22 @@ UUID: $UUID
 Public Key: $PUBLIC_KEY
 Short ID: $SHORT_ID
 SNI: www.microsoft.com
+Fingerprint: chrome
+Flow: xtls-rprx-vision
+Security: reality
+Network: tcp
 EOF
 
-echo "💾 Конфигурация сохранена в /root/reality_config.txt"
+echo "💾 Конфигурация сохранена в /root/reality_config.txt и /root/reality_info.txt"
 
 # Создание конфигурации сервера
 echo "⚙️ Создание конфигурации сервера..."
 cat > /etc/xray/config.json << EOF
 {
   "log": {
-    "loglevel": "info"
+    "loglevel": "info",
+    "access": "/var/log/xray/access.log",
+    "error": "/var/log/xray/error.log"
   },
   "inbounds": [
     {
@@ -135,6 +276,16 @@ cat > /etc/xray/config.json << EOF
 }
 EOF
 
+# Проверка конфигурации
+echo "🔍 Проверка конфигурации..."
+if ! /usr/local/bin/xray test -config /etc/xray/config.json; then
+    echo "❌ Ошибка в конфигурации!"
+    cat /etc/xray/config.json
+    exit 1
+fi
+
+echo "✅ Конфигурация корректна"
+
 # Создание systemd сервиса
 echo "🔧 Создание systemd сервиса..."
 cat > /etc/systemd/system/xray.service << EOF
@@ -158,14 +309,27 @@ LimitNOFILE=1000000
 WantedBy=multi-user.target
 EOF
 
+# Настройка прав доступа
+chown -R nobody:nogroup /var/log/xray
+chmod 755 /var/log/xray
+
 # Настройка фаервола
 echo "🛡️ Настройка фаервола..."
+
+# Проверка установки ufw
+if ! command -v ufw &> /dev/null; then
+    apt install ufw -y
+fi
+
 ufw --force reset
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
+ufw allow 22/tcp
 ufw allow 443/tcp
 ufw --force enable
+
+echo "✅ Фаервол настроен"
 
 # Запуск сервиса
 echo "🚀 Запуск Xray сервиса..."
@@ -173,279 +337,50 @@ systemctl daemon-reload
 systemctl enable xray
 systemctl start xray
 
-# Проверка статуса
-sleep 3
+# Проверка статуса с задержкой
+sleep 5
 if systemctl is-active --quiet xray; then
     echo "✅ Xray сервис запущен успешно!"
+    
+    # Проверка порта
+    if netstat -tlnp | grep -q ":443.*xray"; then
+        echo "✅ Сервис слушает на порту 443"
+    else
+        echo "⚠️ Предупреждение: порт 443 не прослушивается"
+        netstat -tlnp | grep ":443"
+    fi
 else
     echo "❌ Ошибка запуска Xray сервиса!"
-    systemctl status xray
+    echo "Логи сервиса:"
+    systemctl status xray --no-pager -l
+    echo ""
+    echo "Последние логи:"
+    journalctl -u xray --no-pager -n 20
     exit 1
 fi
 
-# Создание QR кода для мобильных устройств
-echo "📱 Создание QR кода для мобильных устройств..."
-VLESS_URL="vless://$UUID@$SERVER_IP:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=$PUBLIC_KEY&sid=$SHORT_ID&type=tcp&headerType=none#Reality-Server"
-
-echo "$VLESS_URL" | qrencode -t ansiutf8
-echo ""
-echo "📱 Ссылка для импорта в мобильные приложения:"
-echo "$VLESS_URL"
-
-# Создание скрипта для клиента
-echo "💻 Создание скрипта для клиента..."
-cat > /root/client_setup.sh << 'EOF'
-#!/bin/bash
-
-# =============================================================================
-# СКРИПТ 2: АВТОМАТИЧЕСКАЯ НАСТРОЙКА КЛИЕНТА REALITY
-# Скопируйте этот файл на сервер с n8n и запустите
-# =============================================================================
-
-echo "💻 Автоматическая настройка REALITY клиента"
-echo "============================================"
-
-# Проверка прав root
-if [[ $EUID -ne 0 ]]; then
-   echo "❌ Запустите скрипт с правами root: sudo bash client_setup.sh"
-   exit 1
-fi
-
-# Конфигурация (АВТОМАТИЧЕСКИ ПОДСТАВЛЯЕТСЯ)
-SERVER_IP="SERVER_IP_PLACEHOLDER"
-UUID="UUID_PLACEHOLDER"
-PUBLIC_KEY="PUBLIC_KEY_PLACEHOLDER"
-SHORT_ID="SHORT_ID_PLACEHOLDER"
-
-echo "🔗 Подключение к серверу: $SERVER_IP"
-
-# Установка v2ray
-echo "⬬ Установка v2ray..."
-cd /tmp
-wget -q https://github.com/v2fly/v2ray-core/releases/latest/download/v2ray-linux-64.zip
-unzip -q v2ray-linux-64.zip
-chmod +x v2ray
-mv v2ray /usr/local/bin/
-mkdir -p /etc/v2ray
-rm -f v2ray-linux-64.zip
-
-# Создание конфигурации клиента
-echo "⚙️ Создание конфигурации клиента..."
-cat > /etc/v2ray/config.json << CLIENTEOF
-{
-  "log": {
-    "loglevel": "warning"
-  },
-  "inbounds": [
-    {
-      "tag": "socks",
-      "port": 10808,
-      "listen": "127.0.0.1",
-      "protocol": "socks",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls"]
-      },
-      "settings": {
-        "auth": "noauth",
-        "udp": false
-      }
-    },
-    {
-      "tag": "http",
-      "port": 10809,
-      "listen": "127.0.0.1",
-      "protocol": "http",
-      "sniffing": {
-        "enabled": true,
-        "destOverride": ["http", "tls"]
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "tag": "proxy",
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": "$SERVER_IP",
-            "port": 443,
-            "users": [
-              {
-                "id": "$UUID",
-                "flow": "xtls-rprx-vision",
-                "encryption": "none"
-              }
-            ]
-          }
-        ]
-      },
-      "streamSettings": {
-        "network": "tcp",
-        "security": "reality",
-        "realitySettings": {
-          "fingerprint": "chrome",
-          "serverName": "www.microsoft.com",
-          "publicKey": "$PUBLIC_KEY",
-          "shortId": "$SHORT_ID",
-          "spiderX": ""
-        }
-      }
-    },
-    {
-      "tag": "direct",
-      "protocol": "freedom"
-    }
-  ],
-  "routing": {
-    "domainStrategy": "IPIfNonMatch",
-    "rules": [
-      {
-        "type": "field",
-        "outboundTag": "direct",
-        "ip": [
-          "geoip:private"
-        ]
-      }
-    ]
-  }
-}
-CLIENTEOF
-
-# Создание systemd сервиса для клиента
-echo "🔧 Создание systemd сервиса для клиента..."
-cat > /etc/systemd/system/v2ray-client.service << SERVICEEOF
-[Unit]
-Description=V2Ray Client Service
-Documentation=https://github.com/v2fly
-After=network.target nss-lookup.target
-
-[Service]
-User=nobody
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-ExecStart=/usr/local/bin/v2ray run -config /etc/v2ray/config.json
-Restart=on-failure
-RestartPreventExitStatus=23
-
-[Install]
-WantedBy=multi-user.target
-SERVICEEOF
-
-# Запуск клиента
-echo "🚀 Запуск v2ray клиента..."
-systemctl daemon-reload
-systemctl enable v2ray-client
-systemctl start v2ray-client
-
-# Проверка статуса
-sleep 3
-if systemctl is-active --quiet v2ray-client; then
-    echo "✅ V2Ray клиент запущен успешно!"
-else
-    echo "❌ Ошибка запуска v2ray клиента!"
-    systemctl status v2ray-client
-    exit 1
-fi
-
-# Тест подключения
-echo "🔍 Тест подключения..."
-timeout 10 curl --socks5 127.0.0.1:10808 -s https://httpbin.org/ip > /tmp/proxy_test.json
-if [ $? -eq 0 ]; then
-    PROXY_IP=$(cat /tmp/proxy_test.json | grep -o '"origin": "[^"]*' | cut -d'"' -f4)
-    echo "✅ Прокси работает! Ваш IP через прокси: $PROXY_IP"
-else
-    echo "❌ Ошибка подключения к прокси!"
-fi
-
-# Остановка старого n8n и запуск с прокси
-echo "🔄 Перезапуск n8n с прокси..."
-docker stop n8n 2>/dev/null || true
-docker rm n8n 2>/dev/null || true
-
-docker run -it -d --name n8n \
-  -p 5678:5678 \
-  -v n8n_data:/home/node/.n8n \
-  -e HTTP_PROXY=http://127.0.0.1:10809 \
-  -e HTTPS_PROXY=http://127.0.0.1:10809 \
-  -e NO_PROXY=localhost,127.0.0.1 \
-  --add-host=host.docker.internal:host-gateway \
-  docker.n8n.io/n8nio/n8n
-
-echo "🎉 Готово! n8n перезапущен с REALITY прокси"
-echo "📱 Веб-интерфейс n8n: http://$(curl -s ifconfig.me):5678"
-
-# Создание команд для управления
-cat > /root/reality_commands.sh << COMMANDSEOF
-#!/bin/bash
-# Полезные команды для управления REALITY
-
-echo "=== КОМАНДЫ УПРАВЛЕНИЯ REALITY ==="
-echo "1. Статус клиента: systemctl status v2ray-client"
-echo "2. Логи клиента: journalctl -u v2ray-client -f"
-echo "3. Перезапуск клиента: systemctl restart v2ray-client"
-echo "4. Тест прокси: curl --socks5 127.0.0.1:10808 https://httpbin.org/ip"
-echo "5. Перезапуск n8n: docker restart n8n"
-echo "6. Логи n8n: docker logs n8n -f"
-COMMANDSEOF
-
-chmod +x /root/reality_commands.sh
-echo "📋 Команды управления сохранены в /root/reality_commands.sh"
-EOF
-
-# Подстановка реальных значений в скрипт клиента
-sed -i "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g" /root/client_setup.sh
-sed -i "s/UUID_PLACEHOLDER/$UUID/g" /root/client_setup.sh
-sed -i "s/PUBLIC_KEY_PLACEHOLDER/$PUBLIC_KEY/g" /root/client_setup.sh
-sed -i "s/SHORT_ID_PLACEHOLDER/$SHORT_ID/g" /root/client_setup.sh
-chmod +x /root/client_setup.sh
-
-echo ""
-echo "🎉 СЕРВЕР НАСТРОЕН УСПЕШНО!"
-echo "=========================="
-echo "📋 Информация сохранена в: /root/reality_config.txt"
-echo "💻 Скрипт для клиента: /root/client_setup.sh"
-echo ""
-echo "📱 QR-код выше можно сканировать в мобильных приложениях:"
-echo "   - Android: v2rayNG"
-echo "   - iOS: FairVPN, Shadowrocket"
-echo ""
-echo "🔄 СЛЕДУЮЩИЙ ШАГ:"
-echo "   1. Скопируйте файл /root/client_setup.sh на сервер с n8n"
-echo "   2. Запустите: sudo bash client_setup.sh"
-echo ""
-echo "🔗 Или вручную используйте эти данные:"
-cat /root/reality_config.txt
-echo ""
-echo "🎯 Сервер готов к подключениям!"
-
-# =============================================================================
-# ДОПОЛНИТЕЛЬНЫЙ СКРИПТ 3: БЫСТРАЯ ДИАГНОСТИКА
-# Сохраните как: reality_check.sh
-# =============================================================================
-
+# Создание скрипта диагностики
+echo "🔍 Создание скрипта диагностики..."
 cat > /root/reality_check.sh << 'EOF'
 #!/bin/bash
 
-echo "🔍 ДИАГНОСТИКА REALITY"
-echo "====================="
+echo "🔍 ДИАГНОСТИКА REALITY СЕРВЕРА"
+echo "============================="
 
 echo "1. 🖥️ Статус сервера Xray:"
 systemctl status xray --no-pager -l
 
 echo ""
-echo "2. 🔗 Порт 443 (должен слушать Xray):"
-netstat -tlnp | grep :443
+echo "2. 🔗 Порты (443 должен слушать Xray):"
+netstat -tlnp | grep -E "(443|10808|10809)"
 
 echo ""
-echo "3. 📊 Последние подключения:"
-journalctl -u xray --since "10 minutes ago" --no-pager
+echo "3. 📊 Последние подключения (5 минут):"
+journalctl -u xray --since "5 minutes ago" --no-pager | tail -10
 
 echo ""
 echo "4. 🌐 Внешний IP сервера:"
-curl -s ifconfig.me
+curl -s ifconfig.me || curl -s ipinfo.io/ip
 
 echo ""
 echo "5. ⏰ Время сервера:"
@@ -453,16 +388,46 @@ date
 
 echo ""
 echo "6. 🔥 Фаервол (UFW) статус:"
-ufw status
+ufw status numbered
 
 echo ""
-echo "7. 💾 Конфигурация:"
-if [ -f /root/reality_config.txt ]; then
-    cat /root/reality_config.txt
+echo "7. 💾 Конфигурация клиента:"
+if [ -f /root/reality_info.txt ]; then
+    cat /root/reality_info.txt
 else
     echo "❌ Файл конфигурации не найден!"
 fi
+
+echo ""
+echo "8. 🔧 Процессы Xray:"
+ps aux | grep -E "(xray|v2ray)" | grep -v grep
+
+echo ""
+echo "9. 📁 Файловая система:"
+ls -la /etc/xray/
+ls -la /usr/local/bin/xray
 EOF
 
 chmod +x /root/reality_check.sh
-echo "🔍 Скрипт диагностики создан: /root/reality_check.sh"
+
+echo ""
+echo "🎉 REALITY СЕРВЕР УСТАНОВЛЕН УСПЕШНО!"
+echo "====================================="
+echo ""
+echo "📋 Файлы созданы:"
+echo "   📄 /root/reality_config.txt - переменные конфигурации"
+echo "   📄 /root/reality_info.txt - информация для клиентов"
+echo "   🔍 /root/reality_check.sh - скрипт диагностики"
+echo ""
+echo "🔄 СЛЕДУЮЩИЕ ШАГИ:"
+echo "   1. Для получения QR-кода: bash reality_qr_generator.sh"
+echo "   2. Для настройки клиента: скопируйте reality_client_setup.sh на сервер с n8n"
+echo ""
+echo "🔧 Управление сервером:"
+echo "   - Статус: systemctl status xray"
+echo "   - Логи: journalctl -u xray -f"
+echo "   - Диагностика: bash /root/reality_check.sh"
+echo ""
+echo "✅ Сервер готов к подключениям!"
+echo ""
+cat /root/reality_info.txt
